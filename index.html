@@ -37,6 +37,14 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .drop small{display:block;color:var(--muted);margin-bottom:8px}
 .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .thumbs img{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:zoom-in}
+.thumb{position:relative;display:inline-block}
+.thumb .rm{position:absolute;top:-7px;inset-inline-end:-7px;width:22px;height:22px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:12px;line-height:22px;padding:0;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.combo{position:relative}
+#hubList{position:absolute;z-index:6;inset-inline:0;top:calc(100% + 4px);max-height:260px;overflow:auto;margin:0;padding:4px;list-style:none;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+#hubList li{padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;gap:12px}
+#hubList li span{color:var(--muted);font-size:13px}
+#hubList li:hover,#hubList li.on{background:var(--bg)}
+#hubList li.none{color:var(--muted);cursor:default}
 .btn{font:inherit;font-weight:600;border-radius:8px;padding:11px 22px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .btn:disabled{opacity:.55;cursor:wait}
@@ -116,19 +124,20 @@ input[readonly]{opacity:.8;cursor:not-allowed}
 
 <!-- TAB 1 -->
 <section id="tab-form" class="panel">
-<form id="repForm" novalidate>
+<form id="repForm" novalidate autocomplete="off">
  <fieldset><legend>بيانات المكتب</legend>
   <div class="grid">
-   <div><label for="f_date">تاريخ رفع البيانات <span class="req">*</span></label><input type="date" id="f_date" required></div>
+   <div><label for="f_date">تاريخ رفع البيانات <span class="req">*</span></label><input type="date" id="f_date" required readonly tabindex="-1"></div>
    <div><label for="f_office">اسم المكتب <span class="req">*</span></label><input id="f_office" required readonly></div>
   </div>
  </fieldset>
  <fieldset><legend>بيانات المندوب</legend>
   <div class="grid">
-   <div><label for="f_name">اسم المندوب رباعي <span class="req">*</span></label><input id="f_name" required></div>
-   <div><label for="f_phone">رقم الهاتف <span class="req">*</span></label><input id="f_phone" required inputmode="numeric" dir="ltr" maxlength="11" pattern="\d{11}" placeholder="01xxxxxxxxx"></div>
-   <div><label for="f_nid">الرقم القومي <span class="req">*</span></label><input id="f_nid" required inputmode="numeric" dir="ltr" maxlength="14" pattern="\d{14}" placeholder="14 رقم"></div>
-   <div><label for="f_hub">الفرع الذي سيعمل به <span class="req">*</span></label><select id="f_hub" required></select></div>
+   <div><label for="f_name">اسم المندوب رباعي <span class="req">*</span></label><input id="f_name" required autocomplete="off" placeholder="اكتب الاسم بالعربي"><div id="nameMsg" class="msg" role="status"></div></div>
+   <div><label for="f_name_en">اسم المندوب بالإنجليزي <span class="req">*</span></label><input id="f_name_en" required readonly dir="ltr" placeholder="بيتكتب لوحده من الاسم العربي"></div>
+   <div><label for="f_phone">رقم الهاتف <span class="req">*</span></label><input id="f_phone" required autocomplete="off" inputmode="numeric" dir="ltr" maxlength="11" pattern="\d{11}" placeholder="01xxxxxxxxx"></div>
+   <div><label for="f_nid">الرقم القومي <span class="req">*</span></label><input id="f_nid" required autocomplete="off" inputmode="numeric" dir="ltr" maxlength="14" pattern="\d{14}" placeholder="14 رقم"></div>
+   <div><label for="f_hub">الفرع الذي سيعمل به <span class="req">*</span></label><div class="combo"><input id="f_hub" required autocomplete="off" placeholder="اكتب اسم الفرع بالعربي أو بالإنجليزي" role="combobox" aria-controls="hubList" aria-autocomplete="list"><ul id="hubList" role="listbox" hidden></ul></div></div>
   </div>
  </fieldset>
  <fieldset><legend>بيانات المركبة</legend>
@@ -204,10 +213,8 @@ const API_URL="https://script.google.com/macros/s/AKfycbxH1Nkp5MbFlYNSwD0JrWdzCQ
 
 const chip=a=>`<span class="chip ${chipCls(a)}">${esc(a||"قيد المراجعة")}</span>`;
 const opts=(arr,first)=>(first!==undefined?`<option value="">${first}</option>`:"")+arr.map(v=>`<option>${esc(v)}</option>`).join("");
-$("#f_hub").innerHTML=opts(HUBS,"اختر الفرع");
 $("#a_hub").innerHTML=opts(HUBS,"كل الفروع");
 $$(".actionFilter").forEach(s=>s.innerHTML=`<option value="">الكل</option><option value="__none">قيد المراجعة</option>`+opts(ACTIONS));
-$("#f_date").value=new Date().toISOString().slice(0,10);
 
 let session=null,isAdmin=false,reps=[],offices=[];
 const files={front:[],back:[],personal:[],vehicle:[]};
@@ -266,67 +273,140 @@ $("#loginForm").onsubmit=async e=>{
 $("#logoutBtn").onclick=logout;
 
 // Image pickers
-let plateOk=null; // {data, plate} vehicle photo that passed
-let lic=null;     // {plate, year, data:{front,back}} read from the license photos
+// ===== Today's date (locked, refreshes by itself) =====
+const todayCairo=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Africa/Cairo"}).format(new Date());
+function refreshDate(){if($("#f_date").value!==todayCairo())$("#f_date").value=todayCairo()}
+refreshDate();setInterval(refreshDate,60000);document.addEventListener("visibilitychange",refreshDate);
+
+// ===== Hub search (Arabic + English) =====
+const HUB_AR={"03DSP-Elsadat Hub":"السادات","3rd settelment":"التجمع التالت التجمع الثالث","Al Waha hub":"الواحة","Alexandria Hub":"اسكندرية الاسكندرية","Asher Hub":"العاشر من رمضان","Assiut Hub":"اسيوط","Aswan Hub":"اسوان","Banha Hub":"بنها","Bani Mazar Hub":"بني مزار","Behira Hub":"البحيرة","Beni Suef Hub":"بني سويف","Dikernis Hub":"دكرنس","Domiatta Hub":"دمياط","Downtown Hub":"وسط البلد","Edfo Hub":"ادفو","El Obour Hub":"العبور","El Quseir Hub":"القصير","ElAgamy Hub":"العجمي","ElMahala Hub":"المحلة","El-Mansoura Hub":"المنصورة","El-Sharkia Hub":"الشرقية الزقازيق","Faisal Hub":"فيصل","Faqous Hub":"فاقوس","Fayoum Hub":"الفيوم","Gesr Elsuez Hub":"جسر السويس","Hadayk El Ahram Hub":"حدائق الاهرام","Hadayk October":"حدائق اكتوبر","Haram Hub":"الهرم","Hawamdya Hub":"الحوامدية","Heliopolis Hub":"مصر الجديدة","Helwan Hub":"حلوان","Huarghada Hub":"الغردقة","Imbaba Hub":"امبابة","Inventory Hub":"المخزن","Ismailia Hub":"الاسماعيلية","Kafrelsheikh Hub":"كفر الشيخ","Katamya-New Hub":"القطامية","Khorshid Hub":"خورشيد","Luxor Hub":"الاقصر","Maadi Hub":"المعادي","Madinaty Hub":"مدينتي","Mansoura-Talkha Hub":"المنصورة طلخا","Marg Hub":"المرج","Matrouh Hub":"مطروح","Minya Hub":"المنيا","Mohandseen Hub":"المهندسين","Mokattam Hub":"المقطم","Monufia Hub":"المنوفية","Nagaa Hammadi Hub":"نجع حمادي","Nasr City Hub":"مدينة نصر","New Cairo Hub":"القاهرة الجديدة","New October Hub":"اكتوبر الجديدة","New Valley Hub":"الوادي الجديد","October Hub":"اكتوبر","Port Said Hub":"بورسعيد","Qalyoub Hub":"قليوب","Qena Hub":"قنا","Sharm EL Sheikh Hub":"شرم الشيخ","Sheraton Hub":"شيراتون","Shobra Hub":"شبرا","Shorouk Hub":"الشروق","Smouha Hub":"سموحة","Sohag Hub":"سوهاج","Suez Hub":"السويس","Tanta Hub":"طنطا","Zahraa El Maadi Hub":"زهراء المعادي","Zahraa Nasr City Hub":"زهراء مدينة نصر"};
+const normAr=t=>String(t||"").toLowerCase().replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[\s\-_]+/g," ").trim();
+(function hubPicker(){
+ const inp=$("#f_hub"),list=$("#hubList");let idx=-1,shown=[];
+ const show=()=>{
+  const q=normAr(inp.value);
+  shown=HUBS.filter(h=>!q||normAr(h+" "+(HUB_AR[h]||"")).includes(q));
+  idx=-1;
+  list.innerHTML=shown.length?shown.map((h,i)=>`<li role="option" data-i="${i}">${esc(h)}<span>${esc(HUB_AR[h]||"")}</span></li>`).join(""):`<li class="none">مفيش فرع بالاسم ده</li>`;
+  list.hidden=false;
+ };
+ const pick=h=>{inp.value=h;list.hidden=true};
+ inp.addEventListener("focus",show);inp.addEventListener("input",show);
+ inp.addEventListener("keydown",e=>{
+  if(list.hidden)return;
+  const items=$$("#hubList li[data-i]");
+  if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();idx=Math.max(0,Math.min(items.length-1,idx+(e.key==="ArrowDown"?1:-1)));items.forEach((li,i)=>li.classList.toggle("on",i===idx));items[idx]?.scrollIntoView({block:"nearest"})}
+  else if(e.key==="Enter"){e.preventDefault();if(shown[idx>=0?idx:0])pick(shown[idx>=0?idx:0])}
+  else if(e.key==="Escape")list.hidden=true;
+ });
+ list.addEventListener("mousedown",e=>{const li=e.target.closest("li[data-i]");if(li){e.preventDefault();pick(shown[+li.dataset.i])}});
+ inp.addEventListener("blur",()=>{setTimeout(()=>{list.hidden=true;if(inp.value&&!HUBS.includes(inp.value)){const m=HUBS.find(h=>normAr(h)===normAr(inp.value));inp.value=m||""}},150)});
+})();
+
+// ===== English name =====
+let nameEn=null; // {ar,en,sig}
+async function translateName(){
+ const ar=$("#f_name").value.trim().replace(/\s+/g," ");
+ if(nameEn&&nameEn.ar===ar)return;
+ nameEn=null;$("#f_name_en").value="";
+ if(!ar){setMsg("nameMsg","","");return}
+ if(/[a-z]/i.test(ar)){setMsg("nameMsg","err","اكتب الاسم بالعربي");return}
+ setMsg("nameMsg","","جاري كتابة الاسم بالإنجليزي…");
+ try{
+  const j=await api("translit",{name:ar});
+  if($("#f_name").value.trim().replace(/\s+/g," ")!==ar)return;
+  nameEn={ar,en:j.en,sig:j.sig};$("#f_name_en").value=j.en;setMsg("nameMsg","","");
+ }catch(err){setMsg("nameMsg","err","تعذر كتابة الاسم بالإنجليزي: "+err.message)}
+}
+$("#f_name").addEventListener("blur",translateName);
+$("#f_name").addEventListener("input",()=>{if(nameEn){nameEn=null;$("#f_name_en").value=""}});
+
+// ===== Images =====
+let plateOk=null; // {data, plate, sig}
+let lic=null;     // {plate, year, model, sig, data:{front,back}}
 const normPlate=t=>{const x=String(t||"").replace(/[٠-٩]/g,c=>c.charCodeAt(0)-1632).replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[^\p{L}\d]/gu,"");
  return [...x.replace(/\d/g,"")].sort().join("")+"|"+x.replace(/\D/g,"")};
 const samePlate=(a,b)=>!!a&&!!b&&normPlate(a)===normPlate(b);
 function setMsg(id,cls,t){const m=$("#"+id);m.className="msg"+(cls?" "+cls:"");m.textContent=t}
-function clearImg(k){files[k]=[];$(`[data-img="${k}"]`).value="";$(`[data-prev="${k}"]`).innerHTML=""}
-function lockVehicleFields(on){if(!on)["f_model","f_plate","f_year"].forEach(id=>$("#"+id).value="")}
+function clearLic(){lic=null;["f_model","f_plate","f_year"].forEach(id=>$("#"+id).value="")}
+// small, readable JPEG (one version used for checking and for storage)
+const shrinkCache=new WeakMap();
+function shrink(file){
+ if(shrinkCache.has(file))return shrinkCache.get(file);
+ const p=(async()=>{
+  const url=URL.createObjectURL(file);
+  try{
+   const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error("ملف الصورة غير مقروء"));i.src=url});
+   let max=1280,q=.78,out="";
+   for(let t=0;t<5;t++){
+    const s=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement("canvas");
+    c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    out=c.toDataURL("image/jpeg",q);if(out.length<350000)break;max*=.85;q=Math.max(.55,q-.07);
+   }
+   return out;
+  }finally{URL.revokeObjectURL(url)}
+ })();
+ shrinkCache.set(file,p);return p;
+}
+function renderThumbs(k){
+ const box=$(`[data-prev="${k}"]`);box.innerHTML="";
+ files[k].forEach((f,i)=>{
+  const w=document.createElement("span");w.className="thumb";
+  const im=new Image();im.src=URL.createObjectURL(f);im.alt="";
+  const x=document.createElement("button");x.type="button";x.className="rm";x.textContent="✕";x.title="شيل الصورة";x.setAttribute("aria-label","شيل الصورة");
+  x.onclick=()=>{files[k].splice(i,1);renderThumbs(k);afterChange(k)};
+  w.append(im,x);box.append(w);
+ });
+}
 function runMatch(){
  if(!lic||!plateOk)return;
  if(!samePlate(lic.plate,plateOk.plate)){
   setMsg("plateMsg","err",`الصورة مرفوضة: رقم اللوحة في صورة المركبة (${plateOk.plate||"غير مقروء"}) مش مطابق لرقم اللوحة في الرخصة (${lic.plate}).`);
-  plateOk=null;clearImg("vehicle");
+  plateOk=null;files.vehicle=[];renderThumbs("vehicle");
  }else setMsg("plateMsg","ok","اللوحة ظاهرة ومطابقة للرخصة: "+plateOk.plate);
 }
+let licRun=0;
 async function readLicense(){
- lic=null;lockVehicleFields(false);
+ const run=++licRun;clearLic();
  if(!files.front.length||!files.back.length){setMsg("licMsg","",files.front.length||files.back.length?"ارفع صور الوش والضهر علشان نقرا بيانات رخصة المركبة.":"");return}
- const snap=[...files.front,...files.back];
  setMsg("licMsg","","جاري قراءة نوع المركبة ورقم اللوحة وسنة الصنع من الرخصة…");
  try{
-  const data={front:[],back:[]};
-  for(const k of ["front","back"])for(const f of files[k])data[k].push(await shrink(f));
-  const j=await api("readLicense",{images:[...data.front,...data.back]});
-  if(snap.some((f,i)=>f!==[...files.front,...files.back][i]))return;
-  if(!j.found){setMsg("licMsg","err","مش قادرين نقرا رخصة المركبة: "+(j.reason||"رقم اللوحة أو سنة الصنع مش واضحين")+". ارفع صورة أوضح للرخصة.");return}
-  lic={plate:j.plate,year:String(j.year),model:j.model,data};
+  const [front,back]=await Promise.all([Promise.all(files.front.map(shrink)),Promise.all(files.back.map(shrink))]);
+  const j=await api("readLicense",{images:[...front,...back]});
+  if(run!==licRun)return;
+  if(!j.found){setMsg("licMsg","err","مش قادرين نقرا رخصة المركبة: "+(j.reason||"البيانات مش واضحة")+". ارفع صورة أوضح للرخصة.");return}
+  lic={plate:j.plate,year:String(j.year),model:j.model,sig:j.sig,data:{front,back}};
   $("#f_model").value=lic.model;$("#f_plate").value=lic.plate;$("#f_year").value=lic.year;
   setMsg("licMsg","ok",`من الرخصة: ${lic.model}، رقم اللوحة ${lic.plate}، سنة الصنع ${lic.year}`);
   runMatch();
- }catch(err){setMsg("licMsg","err","تعذر قراءة الرخصة: "+err.message+" ");const b=document.createElement("button");b.type="button";b.className="link";b.textContent="حاول تاني";b.onclick=readLicense;$("#licMsg").append(b)}
+ }catch(err){if(run!==licRun)return;setMsg("licMsg","err","تعذر قراءة الرخصة: "+err.message+" ");const b=document.createElement("button");b.type="button";b.className="link";b.textContent="حاول تاني";b.onclick=readLicense;$("#licMsg").append(b)}
 }
-$$("input[data-img]").forEach(inp=>inp.onchange=async()=>{
- const k=inp.dataset.img; files[k]=[...inp.files];
- $(`[data-prev="${k}"]`).innerHTML=""; files[k].forEach(f=>{const i=new Image();i.src=URL.createObjectURL(f);i.alt="";$(`[data-prev="${k}"]`).append(i)});
- if(k==="front"||k==="back")return readLicense();
- if(k!=="vehicle")return;
- plateOk=null;
+let plateRun=0;
+async function checkVehicle(){
+ const run=++plateRun;plateOk=null;
  if(!files.vehicle.length){setMsg("plateMsg","","");return}
  setMsg("plateMsg","","جاري التأكد من ظهور اللوحة…");
  try{
   const data=await shrink(files.vehicle[0]);
   const j=await api("checkPlate",{image:data});
-  if(inp.files[0]!==files.vehicle[0])return;
-  if(j.visible){plateOk={data,plate:j.plate||""};setMsg("plateMsg","ok","اللوحة ظاهرة: "+plateOk.plate+(lic?"":" (هتتطابق مع الرخصة لما تترفع)"));runMatch()}
-  else{setMsg("plateMsg","err","الصورة مرفوضة: "+(j.reason||"رقم اللوحة مش ظاهر")+". صوّر المركبة واللوحة واضحة.");clearImg("vehicle")}
- }catch(err){setMsg("plateMsg","err","تعذر فحص الصورة: "+err.message);clearImg("vehicle")}
+  if(run!==plateRun)return;
+  if(j.visible){plateOk={data,plate:j.plate||"",sig:j.sig};setMsg("plateMsg","ok","اللوحة ظاهرة: "+plateOk.plate+(lic?"":" (هتتطابق مع الرخصة لما تترفع)"));runMatch()}
+  else{setMsg("plateMsg","err","الصورة مرفوضة: "+(j.reason||"رقم اللوحة مش ظاهر")+". صوّر المركبة واللوحة واضحة.");files.vehicle=[];renderThumbs("vehicle")}
+ }catch(err){if(run!==plateRun)return;setMsg("plateMsg","err","تعذر فحص الصورة: "+err.message);files.vehicle=[];renderThumbs("vehicle")}
+}
+function afterChange(k){
+ if(k==="front"||k==="back")readLicense();
+ else if(k==="vehicle")checkVehicle();
+ else files[k].forEach(shrink);
+}
+$$("input[data-img]").forEach(inp=>inp.onchange=()=>{
+ const k=inp.dataset.img,picked=[...inp.files];inp.value="";
+ if(!picked.length)return;
+ files[k]=inp.multiple?[...files[k],...picked].slice(0,5):[picked[0]];
+ renderThumbs(k);afterChange(k);
 });
 // digits only, capped length
 [["f_phone",11],["f_nid",14]].forEach(([id,n])=>$("#"+id).addEventListener("input",e=>{const t=e.target;const d=t.value.replace(/[٠-٩]/g,c=>c.charCodeAt(0)-1632).replace(/\D/g,"").slice(0,n);if(t.value!==d)t.value=d}));
-async function shrink(file){
- const url=URL.createObjectURL(file);
- const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error("ملف الصورة غير مقروء"));i.src=url});
- let max=1600,q=.8,out="";
- for(let t=0;t<6;t++){
-  const s=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement("canvas");
-  c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);c.getContext("2d").drawImage(img,0,0,c.width,c.height);
-  out=c.toDataURL("image/jpeg",q);if(out.length<600000)break;max*=.8;q=Math.max(.5,q-.08);
- }
- URL.revokeObjectURL(url);return out;
-}
 
 $("#repForm").onsubmit=async e=>{
  e.preventDefault();
@@ -334,29 +414,32 @@ $("#repForm").onsubmit=async e=>{
  const v=id=>$("#"+id).value.trim();
  const bad=t=>{msg.classList.add("err");msg.textContent=t};
  if(!session||isAdmin)return bad("سجّل دخول المكتب الأول");
- const req=["f_date","f_office","f_name","f_phone","f_nid","f_hub","f_vtype","f_model","f_plate","f_year"];
+ refreshDate();
+ const req=["f_name","f_phone","f_nid","f_hub","f_vtype","f_model","f_plate","f_year"];
  const missing=req.find(id=>!v(id));
  if(missing&&["f_model","f_plate","f_year"].includes(missing))return bad("ارفع صور الرخصة الأول علشان نوع المركبة ورقم اللوحة وسنة الصنع يتملوا لوحدهم");
- if(missing){bad("أكمل كل الحقول المطلوبة");$("#"+missing).focus();return}
+ if(missing){bad(missing==="f_hub"?"اختار الفرع من القايمة":"أكمل كل الحقول المطلوبة");$("#"+missing).focus();return}
  if(v("f_name").split(/\s+/).length<4){bad("اكتب اسم المندوب رباعي");$("#f_name").focus();return}
+ if(!nameEn||nameEn.ar!==v("f_name").replace(/\s+/g," ")){await translateName();if(!nameEn)return bad("استنى لحد ما الاسم يتكتب بالإنجليزي")}
  if(!/^\d{11}$/.test(v("f_phone"))){bad("رقم الهاتف لازم يكون 11 رقم بالظبط");$("#f_phone").focus();return}
  if(!/^\d{14}$/.test(v("f_nid"))){bad("الرقم القومي لازم يكون 14 رقم بالظبط");$("#f_nid").focus();return}
+ if(!HUBS.includes(v("f_hub"))){bad("اختار الفرع من القايمة");$("#f_hub").focus();return}
  const missImg=Object.keys(files).find(k=>!files[k].length);
  if(missImg)return bad("ارفع "+IMG_LABELS[missImg]);
- if(!lic)return bad("لازم صور الرخصة تتقري الأول (رقم اللوحة وسنة الصنع)");
+ if(!lic)return bad("لازم صور الرخصة تتقري الأول");
  if(!plateOk)return bad("صورة المركبة لازم يكون فيها رقم اللوحة واضح ومطابق للرخصة");
- if(!samePlate(v("f_plate"),lic.plate)||!samePlate(plateOk.plate,lic.plate))return bad("رقم اللوحة مش مطابق بين الرخصة وصورة المركبة");
- if(v("f_year")!==lic.year||v("f_model")!==lic.model)return bad("بيانات المركبة مش مطابقة للرخصة");
- const btn=$("#submitBtn");btn.disabled=true;msg.textContent="جاري تجهيز الصور…";
+ if(!samePlate(plateOk.plate,lic.plate))return bad("رقم اللوحة مش مطابق بين الرخصة وصورة المركبة");
+ const btn=$("#submitBtn");btn.disabled=true;msg.textContent="جاري الإرسال…";
  try{
-  const images={front:lic.data.front,back:lic.data.back,vehicle:[plateOk.data],personal:[]};
-  for(const f of files.personal)images.personal.push(await shrink(f));
-  msg.textContent="جاري الإرسال…";
-  await api("submit",{rep:{date:v("f_date"),name:v("f_name"),phone:v("f_phone"),nid:v("f_nid"),hub:v("f_hub"),
-   vehicleType:v("f_vtype"),vehicleModel:v("f_model"),plate:v("f_plate"),vehicleYear:v("f_year")},images});
-  const d=v("f_date");$("#repForm").reset();$("#f_date").value=d;$("#f_office").value=session.office;
-  Object.keys(files).forEach(k=>{files[k]=[];$(`[data-prev="${k}"]`).innerHTML=""});
-  plateOk=null;lic=null;lockVehicleFields(false);setMsg("plateMsg","","");setMsg("licMsg","","");
+  const personal=await Promise.all(files.personal.map(shrink));
+  await api("submit",{
+   rep:{name:v("f_name"),phone:v("f_phone"),nid:v("f_nid"),hub:v("f_hub"),vehicleType:v("f_vtype")},
+   images:{front:lic.data.front,back:lic.data.back,vehicle:[plateOk.data],personal},
+   proof:{lic:{plate:lic.plate,year:lic.year,model:lic.model,sig:lic.sig},plate:{plate:plateOk.plate,sig:plateOk.sig},name:nameEn}
+  });
+  $("#repForm").reset();refreshDate();$("#f_office").value=session.office;
+  Object.keys(files).forEach(k=>{files[k]=[];renderThumbs(k)});
+  plateOk=null;nameEn=null;clearLic();licRun++;plateRun++;["plateMsg","licMsg","nameMsg"].forEach(id=>setMsg(id,"",""));
   msg.classList.add("ok");msg.textContent="تم إرسال بيانات المندوب";
  }catch(err){bad("تعذر الحفظ: "+err.message)}
  btn.disabled=false;
@@ -415,7 +498,7 @@ document.addEventListener("click",e=>{
  const v=e.target.closest("[data-view]");
  if(v){const r=reps.find(x=>x.id===v.dataset.view);if(!r)return;
   $("#d_title").textContent=r.name;
-  const kv=[["تاريخ الرفع",r.date],["المكتب",r.office],["الهاتف",r.phone],["الرقم القومي",r.nid],["الفرع",r.hub],["نوع المركبة",r.vehicleType],["العربية/الموتوسيكل",r.vehicleModel],["رقم اللوحة",r.plate],["سنة الصنع",r.vehicleYear]];
+  const kv=[["تاريخ الرفع",r.date],["المكتب",r.office],["الاسم بالإنجليزي",r.nameEn],["الهاتف",r.phone],["الرقم القومي",r.nid],["الفرع",r.hub],["نوع المركبة",r.vehicleType],["العربية/الموتوسيكل",r.vehicleModel],["رقم اللوحة",r.plate],["سنة الصنع",r.vehicleYear]];
   $("#d_body").innerHTML=`<p>${chip(r.action)}</p><div class="kv">${kv.map(([k,x])=>`<div><span>${k}</span>${esc(x)}</div>`).join("")}</div>`+
    Object.keys(IMG_LABELS).map(k=>`<div class="gal"><h4>${IMG_LABELS[k]}</h4><div class="thumbs">${(r.images?.[k]||[]).map(id=>`<img data-imgid="${esc(id)}" alt="${IMG_LABELS[k]}">`).join("")||"<span class='note'>لا توجد صور</span>"}</div></div>`).join("");
   $$("#d_body img[data-imgid]").forEach(async im=>{const id=im.dataset.imgid;try{imgCache[id]=imgCache[id]||(await api("image",{id})).data;im.src=imgCache[id]}catch(e){}});
